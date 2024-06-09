@@ -1,0 +1,84 @@
+import serial
+import time
+
+class Create2:
+    def __init__(self, port):
+        self.ser = serial.Serial(port, baudrate=115200, timeout=1)
+        self.init_robot()
+        self.last_turn_direction = 1  # Start with turning right
+
+    def init_robot(self):
+        self.ser.write(b'\x80')  # Start
+        self.ser.write(b'\x83')  # Safe mode
+        time.sleep(0.5)
+    
+    def drive(self, velocity, radius):
+        # Convert velocity and radius to bytes, handling signed values
+        v_high, v_low = self.to_bytes(velocity)
+        r_high, r_low = self.to_bytes(radius)
+        self.ser.write(bytes([137, v_high, v_low, r_high, r_low]))
+
+    def to_bytes(self, value):
+        # Convert a signed integer to two bytes
+        if value >= 0:
+            high, low = divmod(value, 256)
+        else:
+            value = (1 << 16) + value  # Two's complement
+            high, low = divmod(value, 256)
+        return high, low
+
+    def stop(self):
+        self.drive(0, 0)
+
+    def read_bumpers(self):
+        self.ser.write(b'\x8E\x07')  # Request sensor packet 7
+        data = self.ser.read(1)
+        if data:
+            bumpers = ord(data)
+            return (bumpers & 0x01, bumpers & 0x02)  # Left and right bumper
+        return (0, 0)
+    
+    def turn_90_degrees(self, direction):
+        # direction: 1 for left, -1 for right
+        turn_speed = 100  # Speed at which the robot turns
+        turn_time = 1.55  # Time required to turn 90 degrees, adjust this for calibration
+        self.drive(turn_speed, direction * -1)  # Turn in place
+        time.sleep(turn_time)
+        self.stop()
+
+    def move_forward(self, distance):
+        # distance in cm, speed is set to 200 mm/s
+        speed = 200  # mm/s
+        move_time = distance / (speed / 10)  # Convert speed to cm/s and calculate time
+        self.drive(speed, 32767)  # Move forward
+        time.sleep(move_time)
+        self.stop()
+
+    def random_walk(self):
+        try:
+            while True:
+                left_bumper, right_bumper = self.read_bumpers()
+                if left_bumper or right_bumper:
+                    # Reverse a little
+                    self.drive(-200, 0)  # Move backward
+                    time.sleep(0.5)
+                    self.stop()
+
+                    # Alternate turn direction
+                    self.turn_90_degrees(self.last_turn_direction)
+                    self.move_forward(12)  # Move forward 12 cm
+                    self.turn_90_degrees(self.last_turn_direction)
+                    
+                    # Switch turn direction for next bump
+                    self.last_turn_direction *= -1
+
+                else:
+                    self.drive(200, 32767)  # Move forward
+                    time.sleep(0.1)
+        except KeyboardInterrupt:
+            self.stop()
+
+if __name__ == "__main__":
+    port = 'COM3'  # Update this with your serial port
+    create2 = Create2(port)
+    create2.random_walk()
